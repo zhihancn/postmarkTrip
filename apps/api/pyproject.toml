@@ -1,0 +1,135 @@
+[project]
+name = "postmarktrip"
+version = "0.1.0.dev0"
+description = "跑戳日志 · postmarkTrip — 自托管的跑戳记录与管理系统"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "zhihancn" }]
+
+dependencies = [
+    # --- web ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+    # --- data ---
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    # --- auth ---
+    "argon2-cffi>=23.1",
+    "itsdangerous>=2.2",
+    # --- images ---
+    "pillow>=11.0",
+    # --- misc ---
+    "python-dateutil>=2.9",
+    # --- async tasks (used from v1.0) ---
+    "redis>=5.2",
+    "arq>=0.26",
+]
+
+[project.optional-dependencies]
+# Recognition stack. Deliberately NOT a default dependency: v0.1 does not need it,
+# and it is heavy (hundreds of MB of models). Installed from v1.0 onward.
+#
+# ⚠️ 这里必须**显式列出 rapidocr 的传递依赖**，而不是只写 rapidocr-onnxruntime。
+# 原因是踩出来的：
+#
+# rapidocr-onnxruntime 的元数据声明的是 `opencv-python`（**不是** headless 版）。
+# pip 会把两个包都装上，而**非 headless 的那个赢了** —— 它需要 X11，
+# 在 python:3.12-slim 里 import cv2 直接报
+#
+#     ImportError: libxcb.so.1: cannot open shared object file: No such file or directory
+#
+# 后果是识别栈**完全不可用**（cv2 与 rapidocr 都 import 失败），
+# 而它在"包都装上了"的意义上看起来是成功的。实测撞到过一次。
+#
+# 所以下面这一串是**故意的冗余**：opencv-python-headless 已经覆盖了 rapidocr
+# 对 opencv 的需求，把其余传递依赖也写出来，是为了让
+# `pip install -e '.[recognition]'` **一次就装全**，不必让使用者知道
+# "--no-deps + 手工补依赖"这套操作。
+#
+# ⚠️ 代价：rapidocr 将来新增的依赖**不会自动跟上**。这条由
+# tests/test_recognition_deps.py 守着 —— 它把 rapidocr 自己声明的依赖
+# 与本 extra 的声明对账，缺哪个就报哪个名字。
+recognition = [
+    "opencv-python-headless>=4.10",
+    "numpy>=2.1",
+    "onnxruntime>=1.20",
+    # rapidocr 本体
+    "rapidocr-onnxruntime>=1.4",
+    # rapidocr 的其余传递依赖（去掉 opencv-python 之后需手工声明的那部分）
+    "pyclipper>=1.2",
+    "shapely>=2.0",
+    "six>=1.15",
+    "pyyaml>=6",
+    "tqdm>=4",
+]
+dev = [
+    "pytest>=8.3",
+    # starlette 1.7 的 TestClient 依赖 **httpx2**，不是 httpx（见
+    # apps/api/tests/test_http_endpoints.py）。这里写成 httpx 会让 CI 报
+    # "requires the httpx2 package" 而整批请求级测试失败 —— 踩过一次。
+    "httpx2>=2.13",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    # 出现第一个异步测试时再加 pytest-asyncio。
+    # 现在加上只会产生 "Unknown config option: asyncio_mode" 警告。
+]
+
+[project.scripts]
+pmtrip-api = "postmarktrip.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/postmarktrip"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # FastAPI Depends() in defaults is idiomatic
+    "RUF001", # ambiguous unicode: Chinese text is full of it, intentionally
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/versions/*" = ["E", "F", "I", "N"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+# SQLAlchemy's declarative mapping is not fully expressible in strict mypy yet.
+[[tool.mypy.overrides]]
+module = ["postmarktrip.db.models"]
+disallow_untyped_defs = false
+
+# paddleocr / paddlepaddle 是**可选的手工安装**依赖，不在 recognition extra
+# 里（见 recognition/ocr.py 的说明）。所以它们**可能不存在** —— 而 strict +
+# warn_unused_ignores 会让「找不到模块」与「没有类型标注」这两个错误
+# 交替出现（装了报一个、没装报另一个），两边都写 ignore 又必然有一个是
+# unused。用 ignore_missing_imports 把它彻底变成环境无关。
+[[tool.mypy.overrides]]
+module = ["paddleocr.*", "paddlepaddle.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# 只收本包自己的测试。仓库根的 tests/ 是契约测试（黄金图像回归），
+# 需要渲染器，属 v1.1 —— 那时用独立的 CI 步骤跑它们。
+testpaths = ["tests"]
+addopts = "-q"
+# 注：需要 pytest-asyncio 的 asyncio_mode 将在出现第一个异步测试时再加，
+# 现在加上只会产生 "Unknown config option" 警告。

@@ -1,0 +1,14 @@
+node_modules
+dist
+.vite
+.vite-cache
+.pnpm-store
+.pnpm-home
+pnpm-workspace.yaml
+pnpm-lock.yaml
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.local
+.DS_Store
+coverage

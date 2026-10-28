@@ -1,0 +1,123 @@
+# =============================================================================
+# 发布镜像（GHCR）
+#
+# 打一个 `v*` tag，就在 GitHub 上把两个镜像构建好推上去，用户不必本地 build：
+#   ghcr.io/<owner>/postmarktrip-api:<version>       （含识别栈，~1.5 GB）
+#   ghcr.io/<owner>/postmarktrip-gateway:<version>   （前端 + nginx）
+#
+# 用户侧：
+#   PMTRIP_API_REPO=ghcr.io/<owner>/postmarktrip-api
+#   PMTRIP_GATEWAY_REPO=ghcr.io/<owner>/postmarktrip-gateway
+#   PMTRIP_TAG=0.1.0
+#   docker compose pull && docker compose up -d --no-build
+#
+# ⚠️ 首次推送后，GHCR 的包**默认是 private**（即使仓库是公开的）。
+#    去 https://github.com/users/<owner>/packages 把两个包的可见性改成 Public，
+#    否则用户 docker pull 会 401。
+#
+# 为什么只出 amd64：NAS / VPS 以 amd64 为主；arm64 需要 buildx + QEMU 交叉构建，
+# onnxruntime / opencv 的 aarch64 wheel 尚未在本项目验证过。要加时在 platforms
+# 里补 `linux/arm64` 即可，但请在真机上跑一遍识别再宣称支持。
+# =============================================================================
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v，例如 0.1.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    name: 构建并推送镜像
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          # 只允许 0.1.0 / 0.1.0-rc1 这类安全字符，避免拼出奇怪的 tag
+          case "$version" in
+            *[!0-9A-Za-z._-]*) echo "::error::版本号含非法字符：$version"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建 api（含识别栈）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          build-args: |
+            INSTALL_RECOGNITION=1
+            HOST_GID=1000
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-api:${{ steps.ver.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-api:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: 构建 gateway（前端 + nginx）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-gateway:${{ steps.ver.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-gateway:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,scope=gateway,mode=max
+
+      - name: 摘要
+        run: |
+          {
+            echo "### 镜像已推送"
+            echo ""
+            echo '```'
+            echo "${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-api:${{ steps.ver.outputs.version }}"
+            echo "${{ env.REGISTRY }}/${{ steps.ver.outputs.owner }}/postmarktrip-gateway:${{ steps.ver.outputs.version }}"
+            echo '```'
+            echo ""
+            echo "首次发布记得把这两个包的可见性改成 **Public**。"
+          } >> "$GITHUB_STEP_SUMMARY"

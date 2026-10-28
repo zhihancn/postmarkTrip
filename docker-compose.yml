@@ -1,0 +1,307 @@
+# =============================================================================
+# postmarkTrip · 默认部署拓扑
+#
+#   docker compose up -d            （或 make up / .\pmtrip.ps1 up）
+#
+# 设计要点（规范见 docs/ok/05-部署架构与安装指南（规范）.md）：
+#
+#   * **只有 gateway 对外暴露端口**，其余服务只在内部网络互通。
+#   * **没有任何密钥写在本文件里** —— 全部经 env_file: .env 注入。
+#     本文件只用 ${VAR} 插值，必需项用 ${VAR:?} 让缺失时立刻报错。
+#   * **不加顶层 version:** —— Compose v2 已废弃该字段，加了会告警。
+#   * api 与 worker 共用同一个镜像，只是 command 不同。
+#
+# -----------------------------------------------------------------------------
+# 存储策略（**这一节很重要，决定了数据在哪、怎么备份**）
+#
+#   命名卷（Docker 管理）          绑定挂载（宿主目录，你能直接看到）
+#   ├─ postmarktrip-db            ├─ ./data/assets  ← ★ 原始扫描件，内容寻址
+#   └─ postmarktrip-redis         ├─ ./inbox        ← 扫描投递箱
+#                                 ├─ ./public-data  ← 公共数据包
+#                                 ├─ ./models       ← OCR / 向量模型缓存
+#                                 └─ ./backups      ← 转储与资产清单
+#
+# **为什么数据库用命名卷而不是 ./data/db 绑定挂载：**
+#   Windows + Docker Desktop 下，绑定挂载落在 D:\（Windows 文件系统），容器内经
+#   WSL2 的 drvfs 访问。PostgreSQL 的 initdb 需要在数据目录上设置 POSIX 权限并
+#   创建符号链接，而 drvfs 上做不到 —— 典型报错是
+#       initdb: could not change permissions of directory "..."
+#   容器起来就挂。命名卷落在 WSL2 的 ext4 里，没有这个问题，而且快得多。
+#
+# **命名卷不损失任何备份能力：**
+#   备份 PostgreSQL **本来就不该靠拷文件** —— 直接复制运行中的数据目录是不安全
+#   （会拿到撕裂的页）。正确做法是 pg_dump，而 `make backup` / `.\pmtrip.ps1 backup`
+#   做的正是这件事，与数据放在哪无关。
+#
+# **想找到命名卷在磁盘上的真实路径：**
+#       docker volume inspect postmarktrip-db
+#   （doctor 也会把它打印出来。注意：不要直接改动那里的文件。）
+#
+# **./data/assets 刻意保持绑定挂载：**
+#   它是内容寻址的不可变文件，你需要能**直接看到、直接拷走**（rsync/restic 都行）。
+#   这里绑定挂载是正确选择 —— 它没有 POSIX 权限或符号链接方面的特殊要求。
+#
+# =============================================================================
+
+name: postmarktrip
+
+# -----------------------------------------------------------------------------
+# api 与 worker 的公共部分（YAML 锚点，仅在本文件内复用）
+# -----------------------------------------------------------------------------
+x-api-common: &api-common
+  build:
+    # 上下文必须是仓库根目录 —— Dockerfile 里要拷 contract/
+    context: .
+    dockerfile: apps/api/Dockerfile
+    args:
+      # 宿主用户的 gid：让容器用户加入它，从而宿主目录（data/assets、inbox）
+      # 既能被容器写、也**仍然能被宿主用户写**。
+      #
+      # 为什么必须传：以前 entrypoint 直接 chown 宿主目录，宿主用户因此
+      # 失去写权限，`make backup` 的资产清单、宿主侧 rsync、手工放文件全坏。
+      # 默认取宿主登录用户的 gid（`id -g`），取不到时退化为 0（不建组）。
+      HOST_GID: ${HOST_GID:-1000}
+  # 显式给同一个镜像名：两个服务共用一次构建，不会构建两遍。
+  #
+  # 想用 GitHub 构建好的镜像（不本地 build）时，在 .env 里设：
+  #   PMTRIP_API_REPO=ghcr.io/zhihancn/postmarktrip-api
+  #   PMTRIP_TAG=0.1.0
+  # 然后 `docker compose pull && docker compose up -d --no-build`。
+  # 不设就还是用本地构建的 postmarktrip/api:local。
+  image: ${PMTRIP_API_REPO:-postmarktrip/api}:${PMTRIP_TAG:-local}
+  restart: unless-stopped
+  env_file:
+    - .env
+  volumes:
+    # 资产目录可写：storage 层要在根目录建上传临时文件（.upload-*.part）
+    - ./data/assets:/data/assets
+    # ⚠️ 投递目录监听（v1.0）**不能依赖 inotify**：
+    #    Windows 侧写入 D:\...\inbox 时，事件不会穿过 drvfs 传到容器内的 inotify，
+    #    容器会"看不见"新文件。v1.0 的 inbox 监听必须用**轮询**（定时扫描目录 +
+    #    按 sha256 去重）实现，而不是文件系统事件。
+    - ./inbox:/inbox
+    # public-data 刻意**不加 :ro** —— v1.1 的"公共数据包导出/导入"会写入这里。
+    - ./public-data:/public-data
+    - ./models:/models
+    # 标定/回归用的样本集，**只读**。
+    #
+    # 为什么只读：这些是识别管线的**参照集**（切分成功率、戳型判别准确率都在
+    # 它们上面统计）。程序只该读它们，任何写回都会破坏"参照"这个性质 ——
+    # 而 :ro 让这件事在挂载层面就不可能，不靠纪律（与 storage 层"不提供
+    # 覆盖原始件的方法"是同一个思路：把约定变成约束）。
+    #
+    # 为什么不走上传：样本不该混进用户的正式资产（data/assets）里 ——
+    # 那会让"我到底收藏了多少张卡"这个统计失真，而它正是本项目的核心价值。
+    - ./docs/need/pic:/samples:ro
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - pmtrip
+
+services:
+  # ===========================================================================
+  # PostgreSQL 16 + pgvector
+  #
+  # 为什么用 pgvector 镜像：一个库同时解决关系、树形（递归 CTE）、JSONB、
+  # 中文模糊检索（pg_trgm）与 v1.x 的向量检索，不必再引入独立组件。
+  # 注意：默认配置**不依赖** pgvector —— 换成普通 postgres:16 也能跑。
+  # ===========================================================================
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_USER: ${POSTGRES_USER:-postmarktrip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置 —— 请先复制 .env.example 为 .env 并填写}
+      POSTGRES_DB: ${POSTGRES_DB:-postmarktrip}
+      # 显式 UTF8：中文地名、戳面原文全靠它。
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      # 数据放在子目录里：绑定挂载点上若出现任何杂物都不再干扰 initdb。
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # 默认走**命名卷**：任何人 clone 下来都能直接 up，不依赖宿主机上的某个目录。
+      #
+      # 历史（保留，因为这是踩出来的）：开发期这台机器上曾把这里写成绑定挂载
+      # `/home/<you>/pmtrip-pgdata`，理由是 Docker Desktop 的 apiproxy 反复
+      # 执行 `docker compose down -v`（一天 8 次以上），而 `-v` 只删**本项目声明
+      # 的命名卷** —— 数据放绑定挂载上才删不到。
+      #
+      # 但那是**某一台机器**的问题，不该成为所有人的默认值：路径不存在时 postgres
+      # 直接起不来，陌生人克隆后第一步就失败。所以默认回到命名卷，需要绑定的用变量：
+      #
+      #   .env 里写  PMTRIP_PGDATA=/home/you/pmtrip-pgdata
+      #
+      # 三个必须知道的前提（仅当你设了 PMTRIP_PGDATA）：
+      #   1. 路径**必须在 ext4 上**，不能是 `/mnt/d`（DrvFs 权限位不可靠；
+      #      postgres 要 `chmod 0700` 数据目录，会拒绝在那里启动）。
+      #   2. 目录要属于镜像里的 `postgres`（uid 999）。Docker Desktop 下通常自动
+      #      满足；原生 Linux 的 Docker 需先 `sudo chown 999:999 <目录>`。
+      #   3. 目录要**先存在**（`mkdir -p ~/pmtrip-pgdata`）。
+      - ${PMTRIP_PGDATA:-pmtrip-db}:/var/lib/postgresql/data
+      # ⚠️ 只在**数据目录为空时**执行一次（见 infra/initdb/01-extensions.sql 顶部）
+      - ./infra/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # $$ 让 Compose 不要插值，留给容器内的 sh 展开 —— 这样健康检查用的是
+        # 容器自己的 POSTGRES_* 值，与宿主机 .env 的解析结果无关。
+        - pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - pmtrip
+
+  # ===========================================================================
+  # Redis —— ARQ 任务队列。
+  #
+  # 队列数据本身是可丢的，但保留持久化可以避免"重启时正在排队的识别任务消失"。
+  # 同样用命名卷：Redis 的 RDB/AOF 写入对文件系统也有要求，drvfs 上不稳。
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - pmtrip-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - pmtrip
+
+  # ===========================================================================
+  # api —— FastAPI。entrypoint 会等库、跑迁移、初始化管理员，然后降权启动。
+  #
+  # ⚠️ 迁移与初始化**只由 api 执行**（worker 的 command 是 "worker"，
+  #    entrypoint 据此跳过）—— 两个容器同时跑迁移会争抢 Alembic 版本表。
+  # ===========================================================================
+  api:
+    <<: *api-common
+    command: ["api"]
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # entrypoint 用它把宿主目录（data/assets、inbox）设成这个组 + 组写 +
+      # setgid，让**宿主用户与容器用户都能写**，而宿主目录的属主不变。
+      # ⚠️ 必须写在每个服务自己的 environment 里：YAML 锚点的 environment
+      #    会被服务的同名键**整体覆盖**（不是合并），写在 x-api-common 里
+      #    对 api/worker 都不生效。
+      HOST_GID: ${HOST_GID:-1000}
+      # uvicorn 在容器内监听 8000；对外端口由 gateway 映射（APP_PORT）。
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      # 传给应用：它读 app_port。注意这是**对外**端口，不是容器监听端口。
+      APP_PORT: ${APP_PORT:-9999}
+      # 网关在前方，信任它注入的 X-Forwarded-*（见 infra/gateway/nginx.conf）。
+      # 默认 * 安全的前提是 api 端口没有对外映射；若你把 8000 也映射出去了，
+      # 请在 .env 里收紧成具体网段（例如 172.16.0.0/12）。
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    healthcheck:
+      # 打 /api/health 并**要求 ok 为真** —— 端点本身恒返 200，
+      # 只看状态码会把"后端活着但数据库断了"误判为健康。
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import json,urllib.request,sys;
+          d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=5));
+          sys.exit(0 if d.get('ok') else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # 首次启动要跑迁移 + 初始化 +（v1.0 起）加载模型，给足时间。
+      start_period: 120s
+
+  # ===========================================================================
+  # worker —— ARQ 任务队列。
+  #
+  # postmarktrip.worker.settings 尚未实现（v1.0 启用）；此时 entrypoint 会让容器
+  # 待机（sleep infinity）而不是退出，避免 restart: unless-stopped 变成重启风暴。
+  # 待机期间以 Redis 连通性作为健康依据 —— 这正是它唯一的真实依赖。
+  # ===========================================================================
+  worker:
+    <<: *api-common
+    command: ["worker"]
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 见 api 服务里的说明：锚点的 environment 会被覆盖，必须各自声明
+      HOST_GID: ${HOST_GID:-1000}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # ⚠️ 这里**不能**只 ping Redis。
+        #
+        # 原实现是 `redis.ping()`，而它校验的是"Redis 活着"—— 在 worker 容器
+        # 已经崩溃-重启 219 次的情况下，这个检查**一直为真**，于是 compose 报告
+        # `Up (healthy)`。一个明确坏掉的组件看起来完全正常，代价是这个故障
+        # 从 v0.1 上线潜伏到现在，直到有人手工 `docker ps` 才发现。
+        #
+        # 现在跑的是一段真正的逻辑（postmarktrip/worker/healthcheck.py）：
+        # 读 tasks.worker_heartbeat 每 10 秒刷新的心跳键，校验
+        # "worker 进程活着**且事件循环在转**"。阈值取 tasks.HEARTBEAT_TTL。
+        #
+        # 为什么抽成文件而不是写成折叠标量里的一段 `python -c`：
+        # 试过，被 YAML 咬了一次 —— 折叠会把每行前的空白留在值里，
+        # 于是 python 收到带前导空格的代码，报 `IndentationError`，
+        # 健康检查从此**恒为失败**。文件没有缩进歧义，还能被 ruff 检查、
+        # 被单元测试直接 import（不必再从 YAML 里"抠"脚本来测）。
+        - python -m postmarktrip.worker.healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # gateway —— 唯一对外入口：静态前端 + /api 反代。
+  #
+  # 镜像来自前端侧（apps/web/Dockerfile，由前端负责人维护），它会把
+  # infra/gateway/nginx.conf 作为自己的 nginx 配置 COPY 进去。
+  #
+  # ⚠️ 若 apps/web/Dockerfile 尚不存在，本服务无法构建 —— 见
+  #    infra/compose/gateway-standalone.yml 的替代拓扑。
+  # ===========================================================================
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: ${PMTRIP_GATEWAY_REPO:-postmarktrip/gateway}:${PMTRIP_TAG:-local}
+    restart: unless-stopped
+    ports:
+      # host_ip 用 APP_HOST_BIND —— 设成 127.0.0.1 即可做到"只允许本机访问"，
+      # 设成 0.0.0.0 则局域网内其他设备（手机/平板）也能打开。
+      - "${APP_HOST_BIND:-0.0.0.0}:${APP_PORT:-9999}:80"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    depends_on:
+      api:
+        # 与 docs/ok/05 §5.3 一致："健康检查通过后 gateway 才开始接受外部请求"。
+        # 代价：api 起不来时端口完全不监听。排查入口是 docker compose logs api。
+        condition: service_healthy
+    networks:
+      - pmtrip
+
+networks:
+  pmtrip:
+    driver: bridge
+
+# -----------------------------------------------------------------------------
+# 命名卷
+#
+# 显式 name：不写的话 Compose 会加项目前缀（postmarktrip_pmtrip-db），
+# 显式命名后 `docker volume inspect postmarktrip-db` 才是稳定的、可写进文档的路径。
+#
+# ⚠️ 绝不使用 `docker compose down -v` —— 那会**删除这两个卷**，数据库直接没了。
+#    `make clean` / `.\pmtrip.ps1 clean` 刻意不带 -v。
+# -----------------------------------------------------------------------------
+volumes:
+  pmtrip-db:
+    name: postmarktrip-db
+  pmtrip-redis:
+    name: postmarktrip-redis

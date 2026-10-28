@@ -1,0 +1,438 @@
+# =============================================================================
+# postmarkTrip · 持续集成
+#
+# 设计原则：**CI 只跑那些在本地也能跑、且已被验证过的检查。**
+# 一个第一次推送就是红的 CI，比没有 CI 更糟 —— 它会训练人忽略它。
+#
+# 因此这里覆盖的正是 docs/ok/06 里"已验证"的那几类：
+#   后端测试（不连数据库）· 迁移离线渲染 · 前端类型检查与构建 ·
+#   Go Agent 交叉编译 · compose 配置解析
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新推送取消旧的运行
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  GO_VERSION: "1.23"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 后端：单元测试
+  #
+  # 这些测试全部不连数据库 —— 由 tests/conftest.py 把一个不存在的 DATABASE_URL
+  # 塞进环境，并在此之前导入任何应用模块（config.settings 是模块级单例）。
+  # 因此这一步不需要 postgres service，几秒钟就能出结果。
+  # ---------------------------------------------------------------------------
+  api-tests:
+    name: 后端测试（Python 3.12）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/pyproject.toml
+
+      - name: 安装依赖（含测试依赖）
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          # 用 [dev] 而不是裸 . —— TestClient 需要 httpx2，它列在 dev extra 里
+          # [recognition] 也必须装：测试会 import 整个应用，而 recognition 在
+          # 模块级 import cv2/numpy —— 只装 [dev] 会在 collection 阶段直接失败。
+          pip install -e ".[dev,recognition]"
+          pip install --no-deps rapidocr-onnxruntime
+
+      - name: 运行测试
+        working-directory: apps/api
+        run: pytest -q
+
+  # ---------------------------------------------------------------------------
+  # 迁移：离线渲染
+  #
+  # `alembic upgrade head --sql` 不需要数据库，却能把"迁移脚本引用了没导入的
+  # 名字""DDL 语法错误"这类问题在几秒内抓出来 —— 正是它在本项目里抓到了
+  # postgresql.JSONB 未导入的问题（见 docs/ok/06 §五）。
+  # ---------------------------------------------------------------------------
+  migration-render:
+    name: 迁移离线渲染
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/pyproject.toml
+
+      - name: 安装依赖
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: 渲染全部迁移为 SQL
+        working-directory: apps/api
+        env:
+          # 离线模式不会连它，填一个语法合法的值即可
+          DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci
+          SECRET_KEY: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          alembic upgrade head --sql > /tmp/migration.sql
+          echo "--- 渲染结果统计 ---"
+          echo "CREATE TABLE : $(grep -c 'CREATE TABLE' /tmp/migration.sql)"
+          echo "CREATE INDEX : $(grep -c 'CREATE INDEX' /tmp/migration.sql)"
+          # 12 张业务表 + alembic_version
+          test "$(grep -c 'CREATE TABLE' /tmp/migration.sql)" -ge 13
+          test "$(grep -c 'CREATE INDEX' /tmp/migration.sql)" -ge 29
+          # pg_trgm 的 GIN 索引依赖扩展，必须出现在 DDL 里
+          grep -q 'gin_trgm_ops' /tmp/migration.sql
+
+  # ---------------------------------------------------------------------------
+  # 前端：类型检查与构建
+  #
+  # 类型检查单独一步（而不是并进 build）：`vite build` 刻意不跑 tsc，
+  # 这样构建失败与类型失败在 CI 上是两条清晰的信号。
+  # ---------------------------------------------------------------------------
+  web:
+    name: 前端（Node 22）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # 仓库里还没有 lockfile。首次成功构建后应当提交它并把这里换成 `npm ci`，
+      # 以获得可复现的依赖解析。
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 构建
+        run: npm run build
+
+      # ---------------------------------------------------------------------
+      # 纯函数测试（草稿 ⇄ 请求体的翻译层）
+      #
+      # 走一条**零新依赖**的路子：draft.ts 的导入全是 import type，用仓库里已有的
+      # tsc 把它单独编译成自包含 JS，再用 Node 内置的 node:test / node:assert 断言。
+      # 不引入 vitest —— 本项目的开发环境网络受限，装不上就验证不了，
+      # 而把没验证过的测试脚手架写进 CI 比没有更糟。
+      # ---------------------------------------------------------------------
+      - name: 纯函数测试
+        run: npm run test:pure
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Go Agent：格式与交叉编译
+  #
+  # 两个 GOOS 都要编：Windows 走 WIA，Linux 走 SANE，两套后端文件受
+  # build tag 控制 —— 只编一个平台会让另一个平台的语法错误漏网。
+  # ---------------------------------------------------------------------------
+  agent:
+    name: Go Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/agent/go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet（Linux）
+        env: { GOOS: linux }
+        run: go vet ./...
+
+      - name: 编译 Linux
+        env: { GOOS: linux, GOARCH: amd64 }
+        run: go build ./...
+
+      - name: 编译 Windows
+        env: { GOOS: windows, GOARCH: amd64 }
+        run: go build ./...
+
+      - name: 编译 macOS（走 unsupported 后端，验证 build tag 覆盖完整）
+        env: { GOOS: darwin, GOARCH: arm64 }
+        run: go build ./...
+
+  # ---------------------------------------------------------------------------
+  # 编排：compose 配置解析
+  #
+  # 不需要 Docker 引擎 —— `docker compose config` 只做本地解析与变量插值。
+  # 它能抓住"必填变量缺失""卷写错""depends_on 指向不存在的服务"这类问题。
+  # ---------------------------------------------------------------------------
+  compose:
+    name: compose 配置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 从 .env.example 造一个 .env（把 CHANGE_ME 占位值填掉）
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          sed -i 's/CHANGE_ME[A-Za-z0-9_]*/ci-placeholder-value/g' .env
+          # 确认没有残留占位值
+          if grep -q 'CHANGE_ME' .env; then
+            echo "::error::.env 里仍有 CHANGE_ME 残留"
+            grep -n 'CHANGE_ME' .env
+            exit 1
+          fi
+
+      - name: 解析基础 compose
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: 解析 dev 覆盖
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
+  # ---------------------------------------------------------------------------
+  # 前后端契约
+  #
+  # apps/web/src/shared/types.ts 是**手写**的。后端改了字段名、或前端拼错一个名字，
+  # TypeScript 不会报错（它只相信自己的声明），运行时只得到 undefined ——
+  # 界面上表现为"某一列永远空白"。
+  #
+  # 前端已有的 typecheck 校验的是"代码是否符合这些声明"，不是"这些声明是否
+  # 符合后端"。这个 job 补上后半句：把 TS 接口的字段名集合与 OpenAPI schema 对账。
+  #
+  # 不需要数据库；但需要后端依赖（要导入 FastAPI 应用取 OpenAPI）。
+  # ---------------------------------------------------------------------------
+  contract:
+    name: 前后端契约
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/pyproject.toml
+
+      - name: 安装后端依赖
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          # 契约测试会 import 应用取 OpenAPI，同样需要 recognition 依赖
+          pip install -e ".[recognition]"
+          pip install --no-deps rapidocr-onnxruntime
+          pip install pytest
+
+      - name: 前端类型 ↔ 后端 OpenAPI
+        run: pytest tests/contract -q
+
+  # ---------------------------------------------------------------------------
+  # Nginx 配置语法
+  #
+  # 镜像构建期**刻意不跑** `nginx -t`：nginx 在解析配置时会去解析
+  # `proxy_pass http://api:8000` 里的主机名，而构建容器里没有 `api` 这个 DNS 名，
+  # 于是必然以 "host not found in upstream" 失败 —— 那是假阳性，不是配置错误。
+  #
+  # 在 CI 里用 `--add-host api:127.0.0.1` 给它一个地址，就能做**真正的**语法校验。
+  # 这是本仓库里唯一能验证这份配置的地方。
+  # ---------------------------------------------------------------------------
+  nginx:
+    name: Nginx 配置语法
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: nginx -t
+        run: |
+          set -euo pipefail
+          docker run --rm --add-host api:127.0.0.1 \
+            -v "$PWD/infra/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:alpine nginx -t 2>&1 | tee /tmp/nginx-t.log
+          grep -q 'syntax is ok' /tmp/nginx-t.log
+          grep -q 'test is successful' /tmp/nginx-t.log
+
+      - name: 关键约定（改错了会静默 404 或丢安全头）
+        run: |
+          set -euo pipefail
+          conf=infra/gateway/nginx.conf
+          # proxy_pass 不能带 URI，否则 /api/ 前缀被吃掉 -> 后端 404
+          grep -q 'proxy_pass http://api:8000;' "$conf"
+          # location /api/ 必须带 ^~，否则静态文件正则 location 会抢先匹配它
+          grep -q 'location ^~ /api/' "$conf"
+          # add_header 在 nginx 里不继承：每个自带 add_header 的 location
+          # 都必须重复那几条安全头。这里数一下出现次数，防止有人"清理冗余"。
+          count=$(grep -c 'X-Content-Type-Options' "$conf")
+          echo "X-Content-Type-Options 出现 $count 次（server + 3 个 location = 4）"
+          test "$count" -ge 4
+
+  # ---------------------------------------------------------------------------
+  # 文本编码约定
+  #
+  # 编码错误在开发时完全看不见，只在别人的环境里炸：
+  #   * 无 BOM 的 .ps1  → Windows PowerShell 5.1 按 ANSI 代码页读，中文成乱码、
+  #                       脚本解析失败（本仓库真的发生过一次）
+  #   * 带 BOM 的 .sh   → BOM 落在 shebang 之前，bash 报错
+  #   * 带 BOM 的 .ini  → Alembic 用 encoding="locale" 读，BOM 混进第一个键名
+  #
+  # 只用标准库，不需要装任何依赖。
+  # ---------------------------------------------------------------------------
+  encoding:
+    name: 文本编码约定
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 检查 BOM 约定
+        run: python infra/scripts/check-encoding.py
+
+  # ---------------------------------------------------------------------------
+  # 泄漏扫描
+  #
+  # 扫的是**已经进入 git 的文件**：真实 API Key、带用户名的 Windows 路径、
+  # 已知的个人标识，以及「.env 是否曾出现在历史里」。
+  #
+  # 为什么单独一个 job 而不是并进 encoding：两者的失败含义完全不同 ——
+  # 编码问题是"别人的编辑器会乱码"，泄漏是"发出去就收不回来"。
+  # ---------------------------------------------------------------------------
+  leaks:
+    name: 泄漏扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 要查 .env 是否出现在历史里
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 扫描已跟踪文件与历史
+        run: python infra/scripts/check-leaks.py
+
+  # ---------------------------------------------------------------------------
+  # Shell 脚本与 Makefile
+  #
+  # **这个 job 补的是一处真实的验证空白。** 本项目的 Windows 开发环境禁止启动
+  # WSL 的 bash（报 Bash/E_ACCESSDENIED），所以 4 个 .sh 文件
+  # （entrypoint.sh / doctor.sh / check-contract.sh / test-contract.sh）
+  # **从来没有被做过语法检查** —— 一次拼写错误会一直藏到 CI 或用户那里。
+  # ubuntu-latest 上有 bash，这里做真正的 `bash -n`。
+  #
+  # 同时检查 Makefile 的卫生（TAB 缩进、$ 转义、目标重复），那部分不需要 shell。
+  # ---------------------------------------------------------------------------
+  shell:
+    name: Shell 脚本与 Makefile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: bash -n 全部 shell 脚本 + Makefile 卫生
+        run: python infra/scripts/check-shell.py
+
+  # ---------------------------------------------------------------------------
+  # 配置一致性
+  #
+  # 代码读取的环境变量（config.py 的 Settings）、文档记录的（.env.example）、
+  # 编排传递的（各 compose 文件）是**三处独立维护**的清单。任何一处漏了，
+  # 症状都是"首次启动以一个难懂的错误失败"，或者更糟 —— 应用静默用了默认值，
+  # 而用户以为自己设置的那个生效了。
+  #
+  # 这个检查需要后端依赖（要导入 Settings），所以与 encoding job 分开。
+  # ---------------------------------------------------------------------------
+  config:
+    name: 配置一致性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api/pyproject.toml
+
+      - name: 安装后端依赖
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: 核对 env 变量
+        run: python infra/scripts/check-config.py
+
+  # ---------------------------------------------------------------------------
+  # 静态检查：暂时不阻断
+  #
+  # ruff / mypy 的配置在 pyproject.toml 里，但**尚未在真实代码上跑过**
+  # （开发环境网络受限，装不上这两个工具）。第一次跑绿之后请删掉
+  # continue-on-error —— 在那之前让它作为建议性信号，而不是红叉。
+  # ---------------------------------------------------------------------------
+  lint-advisory:
+    name: 静态检查（建议性，暂不阻断）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 安装工具
+        run: python -m pip install --upgrade pip ruff mypy
+
+      - name: ruff check
+        working-directory: apps/api
+        run: ruff check src tests
+
+      - name: ruff format --check
+        working-directory: apps/api
+        run: ruff format --check src tests
+
+      - name: mypy
+        working-directory: apps/api
+        run: mypy src

@@ -1,0 +1,74 @@
+# =============================================================================
+# 构建上下文排除清单
+#
+# 服务端 Dockerfile 的构建上下文是**仓库根目录**（因为要拷 contract/）。
+# 这个文件同时被 apps/api 与 apps/web 的构建使用 —— 所以**不要**排除任何
+# 源码目录，只排除产物、运行时数据与机密。
+# =============================================================================
+
+# ---- 机密：绝不能进镜像 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---- 版本控制与编辑器 ----
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 运行时数据（docs/ok/05 §三 的宿主目录）----
+# 这些目录可能很大（扫描件、数据库文件），绝不能进构建上下文。
+/data/
+/inbox/
+/backups/
+/models/
+
+# ---- 样本图片：体积大且与构建无关（docs/need/pic 有 11 张 600dpi 扫描件）----
+docs/need/pic/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+dist/
+build/
+site/
+
+# ---- Node / TypeScript ----
+node_modules/
+.vite/
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# ---- Go（v1.1 的扫描 Agent）----
+apps/agent/pmtrip-agent
+apps/agent/pmtrip-agent.exe
+
+# ---- 本地杂物 ----
+*.local
+/tmp/
+/tests/contract/output/

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "template_id": "poster",
+  "name": "一戳一页（148×100）",
+  "canvas": { "width_mm": 148, "height_mm": 100, "dpi": 300 },
+  "background": { "type": "solid", "color": "#f7f3ea" },
+  "slots": [
+    {
+      "id": "postmark-1",
+      "kind": "postmark",
+      "x": 10,
+      "y": 10,
+      "w": 80,
+      "h": 80,
+      "z": 10,
+      "fit": "contain",
+      "label": "邮戳"
+    },
+    {
+      "id": "inscription",
+      "kind": "text",
+      "x": 96,
+      "y": 14,
+      "w": 44,
+      "h": 10,
+      "z": 20,
+      "field": "postmark.inscription",
+      "font_size_mm": 4,
+      "align": "left",
+      "valign": "top",
+      "color": "#1a1a1a",
+      "label": "戳面文字"
+    },
+    {
+      "id": "date",
+      "kind": "text",
+      "x": 96,
+      "y": 40,
+      "w": 44,
+      "h": 8,
+      "z": 20,
+      "field": "postmark.date",
+      "font_size_mm": 3.6,
+      "align": "left",
+      "valign": "top",
+      "color": "#333333",
+      "label": "日期"
+    },
+    {
+      "id": "place",
+      "kind": "text",
+      "x": 96,
+      "y": 56,
+      "w": 44,
+      "h": 8,
+      "z": 20,
+      "field": "postmark.place",
+      "font_size_mm": 3.2,
+      "align": "left",
+      "valign": "top",
+      "color": "#333333",
+      "label": "地点"
+    },
+    {
+      "id": "office",
+      "kind": "text",
+      "x": 96,
+      "y": 72,
+      "w": 44,
+      "h": 8,
+      "z": 20,
+      "field": "postmark.office",
+      "font_size_mm": 3.2,
+      "align": "left",
+      "valign": "top",
+      "color": "#333333",
+      "label": "局名"
+    }
+  ]
+}

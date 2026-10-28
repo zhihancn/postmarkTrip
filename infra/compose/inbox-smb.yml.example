@@ -1,0 +1,53 @@
+# =============================================================================
+# postmarkTrip · 示例片段（.example 后缀：Compose **不会**自动读取它）
+#
+# Profile L（Linux / NAS）下，扫描文件由 Windows 侧产生，需要让 Linux 服务器
+# 看到它。两种做法：
+#
+#   A. 宿主侧挂载（推荐，简单）
+#      Windows 上开一个共享目录 → Linux 侧 mount 到 /srv/puluo/inbox
+#      （/etc/fstab 里写 cifs，或在 NAS 的 UI 里挂），compose 不动。
+#
+#   B. 容器侧 CIFS 卷（本文件示例）
+#      直接把 SMB 共享挂成容器里的 /inbox，不依赖宿主挂载。
+#
+# ⚠️ 为什么本文件是 .example 而不是可直接 -f 叠加的覆盖文件：
+#    基础 docker-compose.yml 里 api/worker 已经有一个 /inbox 绑定挂载，
+#    再叠一个同目标路径的卷会形成"同一路径挂两次"的歧义（行为取决于
+#    Compose 的合并实现，不同版本可能不同）。**正确做法是改基础文件**，
+#    把那一行替换掉，而不是叠加。
+#
+# -----------------------------------------------------------------------------
+# 做法：编辑 docker-compose.yml 的 x-api-common.volumes，
+#      把 `- ./inbox:/inbox` 换成 `- inbox_smb:/inbox`，
+#      并在文件末尾的 volumes 段加入下面 inbox_smb 的定义。
+#      然后在 .env 里设置 SMB_DEVICE / SMB_USER / SMB_PASSWORD。
+# -----------------------------------------------------------------------------
+
+services:
+  api:
+    volumes:
+      - inbox_smb:/inbox
+
+  worker:
+    volumes:
+      - inbox_smb:/inbox
+
+volumes:
+  inbox_smb:
+    driver: local
+    driver_opts:
+      type: cifs
+      # uid/gid 必须与容器内的 pmtrip(10001) 对齐 —— 否则容器写不进这个共享，
+      # healthcheck 的 inbox 检查会失败。
+      # file_mode/dir_mode 直接给足权限，避免 SMB 服务端权限映射带来的怪问题。
+      o: >-
+        username=${SMB_USER:?SMB_USER 未设置},
+        password=${SMB_PASSWORD:?SMB_PASSWORD 未设置},
+        vers=3.0,
+        uid=10001,
+        gid=10001,
+        file_mode=0664,
+        dir_mode=0775,
+        noperm
+      device: "${SMB_DEVICE:?SMB_DEVICE 未设置，形如 //192.168.1.10/scan-inbox}"

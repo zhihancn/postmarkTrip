@@ -1,0 +1,39 @@
+# =============================================================================
+# apps/api/.dockerignore
+#
+# 注意：**默认构建不使用这个文件。**
+# 因为构建上下文是仓库根目录（需要拷 contract/），Docker 只会读取上下文根部的
+# `.dockerignore`（即 /  .dockerignore）。
+#
+# 这个文件只服务于一种次要场景：单独构建 API 镜像时以 apps/api 为上下文，例如
+#
+#     docker build -t postmarktrip/api:dev apps/api
+#
+# 这种构建**拿不到 contract/**，因此仅适合"只想验证 API 层依赖能否装上"的快速试跑。
+# 正式构建请始终使用：
+#
+#     docker build -f apps/api/Dockerfile .
+# =============================================================================
+
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+dist/
+build/
+
+.env
+.env.*
+!.env.example
+
+tests/
+*.local

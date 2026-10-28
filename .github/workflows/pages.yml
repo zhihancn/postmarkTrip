@@ -1,0 +1,62 @@
+# =============================================================================
+# 静态演示站（GitHub Pages）
+#
+# 只发布两样东西：
+#   1. docs/index.html       —— 落地页
+#   2. docs/frontDemo/       —— 预录回放的识别确认演示
+#
+# 刻意**不**把整个 docs/ 发上去：里面是内部交接与验收记录，还有 38 MB 的
+# 样本扫描件，既不该当网页浏览，也没必要占用 Pages 的流量额度。
+#
+# 前置设置（一次性，在仓库 Settings → Pages 里）：
+#   Source = "GitHub Actions"
+# =============================================================================
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "demo/index.html"
+      - "demo/.nojekyll"
+      - "demo/frontDemo/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 部署演示站
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 组装站点
+        run: |
+          set -eu
+          mkdir -p _site
+          cp demo/index.html _site/
+          cp demo/.nojekyll _site/
+          cp -r demo/frontDemo _site/frontDemo
+          # 诊断产物/构建缓存不进站点
+          rm -rf _site/frontDemo/_check _site/frontDemo/.ruff_cache
+          echo "站点文件："
+          find _site -type f | sort
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

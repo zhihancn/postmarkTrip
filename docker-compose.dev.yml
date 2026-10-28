@@ -1,0 +1,83 @@
+# =============================================================================
+# postmarkTrip · 开发覆盖文件
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   （或 make dev / .\pmtrip.ps1 dev）
+#
+# 它只做一件事：**让后端热重载**。
+#
+#   * api    —— 挂载 apps/api/src，uvicorn --reload；改 Python 代码即时生效
+#   * worker —— 同样挂载源码（v1.0 起它有实质任务）
+#
+# 其余服务（db / redis / gateway）沿用基础文件，因此 `make dev` 起来的就是一个
+# **完整可用**的栈：http://localhost:9999 能打开界面，并且后端改代码不用重启。
+#
+# -----------------------------------------------------------------------------
+# 前端 HMR 在**宿主机**上跑，不在这里
+#
+# 前端调试请另开一个终端：
+#
+#     cd apps/web
+#     npm install
+#     npm run dev          # → http://localhost:5173
+#
+# 为什么不做成一个 compose 服务：`apps/web/vite.config.ts` 的 /api 代理目标
+# 默认是 http://localhost:$APP_PORT。这个地址只有在 vite 跑在宿主机上时才成立 ——
+# 那时 localhost:9999 正是 gateway 映射出来的端口。
+#
+# 如果把 vite 放进容器，容器里的 localhost:9999 指向容器自己（那里没有服务），
+# /api 代理会直接 ECONNREFUSED。
+#
+# 好消息：vite 配置**现在支持** `VITE_PROXY_TARGET` 覆盖（放在 apps/web/.env.local
+# 或环境变量里即可），所以容器化 vite 已经没有障碍：
+#
+#     web-dev:
+#       image: node:22-alpine
+#       working_dir: /app
+#       command: sh -c "npm install && npm run dev -- --host"
+#       volumes: ["./apps/web:/app"]
+#       environment:
+#         VITE_PROXY_TARGET: http://gateway
+#       ports: ["${WEB_DEV_PORT:-5173}:5173"]
+#
+# 之所以仍然**不**提供这个服务：它会把"前端开发要有一份能在容器里装的 Node 依赖"
+# 变成部署契约的一部分，而当前文档明确写的是"运维只需要 Docker，前端开发需要
+# 宿主机有 Node"。与其塞一个没人验证过的服务，不如把这两条路都写清楚 ——
+# 要走容器化，上面那段照抄即可。
+#
+# 注意：这只是**前端开发**的问题。
+# 部署与运维依然只需要 Docker（见 README 的"快速开始"）。
+# -----------------------------------------------------------------------------
+# =============================================================================
+
+services:
+  api:
+    volumes:
+      # 源码挂载。镜像是 editable 安装（pip install -e），指向 /app/apps/api/src，
+      # 所以把真实源码挂进来即生效，不需要重建镜像。
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/migrations:/app/apps/api/migrations
+      - ./apps/api/alembic.ini:/app/apps/api/alembic.ini:ro
+      # 契约层只读挂载：模板 schema 变了不需要重建镜像
+      - ./contract:/app/contract:ro
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: DEBUG
+      # 人类可读日志，不要 JSON —— 开发时要能一眼扫过去
+      LOG_JSON: "false"
+      # entrypoint 据此加 --reload
+      API_RELOAD: "1"
+      # uvicorn 的热重载不要盯着整个 /app：默认盯 CWD 会把 /data、/models
+      # 这些挂载进来的数据目录也纳入监视，白白消耗 inotify 配额。
+      API_RELOAD_DIR: /app/apps/api/src
+      # 局域网 HTTP 开发，cookie 不能带 Secure，否则 localhost 登录不上
+      COOKIE_SECURE: "false"
+
+  worker:
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/migrations:/app/apps/api/migrations
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: DEBUG
+      LOG_JSON: "false"

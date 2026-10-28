@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "template_id": "blank-card",
+  "name": "空白卡（54×90）",
+  "canvas": { "width_mm": 54, "height_mm": 90, "dpi": 300 },
+  "slots": [
+    {
+      "id": "stamp-1",
+      "kind": "stamp",
+      "x": 4,
+      "y": 13,
+      "w": 46,
+      "h": 30,
+      "z": 5,
+      "fit": "contain",
+      "label": "邮票"
+    },
+    {
+      "id": "postmark-1",
+      "kind": "postmark",
+      "x": 10,
+      "y": 42,
+      "w": 36,
+      "h": 36,
+      "z": 10,
+      "fit": "contain",
+      "label": "邮戳"
+    },
+    {
+      "id": "inscription",
+      "kind": "text",
+      "x": 3,
+      "y": 79,
+      "w": 48,
+      "h": 7,
+      "z": 20,
+      "field": "postmark.inscription",
+      "font_size_mm": 3.2,
+      "align": "center",
+      "valign": "middle",
+      "color": "#111111",
+      "label": "戳面文字"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@postmarktrip/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "跑戳日志（postmarkTrip）Web 前端",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:check": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --port 5173",
+    "test:pure": "tsc src/features/cards/draft.ts src/features/recognize/recognize.ts src/features/gallery/galleryFilters.ts src/features/gallery/timelineGroup.ts src/features/gallery/postmarkWall.ts src/features/gallery/stampWall.ts src/features/gallery/map.ts src/render/scene.ts src/render/export.ts --outDir .test-build --target es2022 --module esnext --skipLibCheck && node tests/draft.test.mjs && node tests/recognize.test.mjs && node tests/gallery.test.mjs && node tests/map.test.mjs && node tests/scene.test.mjs",
+    "check:static": "python tools/check_web_static.py || python3 tools/check_web_static.py"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.13",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

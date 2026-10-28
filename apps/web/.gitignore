@@ -1,0 +1,12 @@
+node_modules
+dist
+.vite
+.vite-cache
+.pnpm-store
+.pnpm-home
+pnpm-workspace.yaml
+*.local
+npm-debug.log*
+
+# test:pure 把纯函数模块编译到这里再交给 Node 断言（见 tests/draft.test.mjs）
+.test-build

@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>邮戳卡识别 · 确认界面（原型）</title>
+<style>
+  /* 配色直接照搬 apps/web/src/styles/app.css 的变量 —— 原型必须和真实应用一致，
+     否则"看起来对了"这件事本身就没有意义 */
+  :root{
+    --bg:#f5f6f8; --surface:#ffffff; --surface-2:#f0f2f5; --surface-3:#e7eaef;
+    --border:#dfe3e9; --border-strong:#c3cad4;
+    --text:#1b1f24; --text-muted:#5b6470; --text-faint:#8b93a1;
+    --primary:#1f6feb; --primary-hover:#1a5fd0; --primary-soft:#e8f0fe;
+    --primary-border:#bcd3fa;
+    --danger:#c0392b; --danger-soft:#fdecea; --danger-border:#f3c2bc;
+    --success:#1a7f37; --success-soft:#e7f6ec;
+    --warn:#9a5b00; --warn-soft:#fdf3e2;
+    --accent:#8250df;
+    --radius-sm:5px; --radius:9px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+
+  header{display:flex;align-items:center;gap:14px;padding:12px 20px;
+         background:var(--surface);border-bottom:1px solid var(--border);
+         position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:650;white-space:nowrap}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap}
+  .tab{padding:6px 13px;border:1px solid var(--border);border-radius:999px;
+       background:var(--surface-2);color:var(--text-muted);cursor:pointer;
+       font-size:13.5px;white-space:nowrap}
+  .tab:hover{border-color:var(--border-strong);color:var(--text)}
+  .tab.on{background:var(--primary);border-color:var(--primary);color:#fff}
+  .tab .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+            background:var(--warn);margin-left:6px;vertical-align:middle}
+  .spacer{flex:1}
+  .meta{color:var(--text-faint);font-size:13px;white-space:nowrap}
+
+  main{display:grid;grid-template-columns:minmax(360px,44%) 1fr;
+       height:calc(100vh - 57px - 64px)}
+  @media(max-width:960px){main{grid-template-columns:1fr;height:auto}}
+
+  /* ---------- 左：原图 + 叠加 ---------- */
+  .stage{background:var(--bg);border-right:1px solid var(--border);
+         overflow:auto;padding:16px}
+  .stagewrap{position:relative;display:inline-block;line-height:0;
+             border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
+             background:#fff}
+  .stagewrap img{max-width:100%;display:block}
+  .stagewrap svg{position:absolute;inset:0;width:100%;height:100%}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:13px;
+          color:var(--text-muted)}
+  .legend i{display:inline-block;width:12px;height:3px;border-radius:2px;
+            margin-right:6px;vertical-align:middle}
+  .notebox{margin-top:14px;padding:12px 14px;background:var(--surface);
+           border:1px solid var(--border);border-radius:var(--radius);
+           font-size:13.5px;color:var(--text-muted);line-height:1.7}
+  .notebox b{color:var(--text)}
+  .notes{margin-top:12px;font-size:12.5px;color:var(--text-faint);
+         border-left:3px solid var(--border);padding-left:10px}
+  .notes div{margin:3px 0}
+
+  /* ---------- 右：卡片列表 ---------- */
+  .list{overflow:auto;padding:16px 20px 32px}
+  .card{background:var(--surface);border:1px solid var(--border);
+        border-radius:var(--radius);margin-bottom:12px;overflow:hidden}
+  .card.susp{border-color:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+  .card.bad{border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+  .card.excluded{opacity:.5}
+  .card.excluded .chips{text-decoration:line-through}
+
+  .row{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer}
+  .row:hover{background:var(--surface-2)}
+  .thumb{width:52px;height:88px;border-radius:var(--radius-sm);
+         border:1px solid var(--border);background-color:var(--surface-3);
+         background-repeat:no-repeat;flex:0 0 52px}
+  .idx{width:30px;height:30px;flex:0 0 30px;border-radius:50%;
+       background:var(--surface-3);display:grid;place-items:center;
+       font-size:13.5px;font-weight:600;color:var(--text-muted)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1;min-width:0}
+  .chip{display:inline-flex;align-items:baseline;gap:7px;padding:5px 11px;
+        border-radius:var(--radius-sm);font-size:14px;border:1px solid transparent;
+        cursor:pointer;white-space:nowrap;line-height:1.35}
+  .chip .k{font-size:11.5px;color:var(--text-faint)}
+  .chip b{font-weight:600}
+  .chip.ok{background:var(--success-soft);border-color:#bfe3ca;color:var(--success)}
+  .chip.warn{background:var(--warn-soft);border-color:#f0dcb8;color:var(--warn)}
+  .chip.bad{background:var(--danger-soft);border-color:var(--danger-border);color:var(--danger)}
+  .chip.none{background:var(--surface-2);border-color:var(--border);color:var(--text-faint)}
+  .chip:hover{filter:brightness(.97)}
+  .chip .pen{color:var(--primary)}
+
+  .side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;flex:0 0 auto}
+  .badge{font-size:12px;padding:3px 9px;border-radius:999px;
+         border:1px solid var(--border);color:var(--text-muted);
+         background:var(--surface-2);white-space:nowrap}
+  .badge.cloud{border-color:var(--primary-border);color:var(--primary);
+               background:var(--primary-soft)}
+  .badge.bad{border-color:var(--danger-border);color:var(--danger);
+             background:var(--danger-soft)}
+  .caret{color:var(--text-faint);font-size:12px;width:14px;text-align:center}
+
+  .detail{border-top:1px solid var(--border);padding:16px 18px;
+          background:var(--surface-2);display:none}
+  .card.open .detail{display:block}
+  table.f{width:100%;border-collapse:collapse;font-size:14px}
+  table.f td{padding:7px 10px;vertical-align:top;border-bottom:1px solid var(--border)}
+  table.f tr:last-child td{border-bottom:0}
+  table.f td.k{color:var(--text-muted);width:104px;white-space:nowrap;font-size:13.5px}
+  table.f td.v{font-family:ui-monospace,Consolas,monospace;font-size:13.5px}
+  .why{color:var(--text-faint);font-size:12.5px;margin-top:3px;
+       font-family:-apple-system,"Microsoft YaHei",sans-serif}
+  .mini{font-size:13px;color:var(--text-muted);margin-top:12px}
+  .mini code{background:var(--surface-3);padding:2px 7px;border-radius:4px;
+             font-size:12.5px;margin-right:4px}
+  .acts{display:flex;gap:10px;margin-top:16px;align-items:center;flex-wrap:wrap}
+
+  button{font-family:inherit}
+  .btn{border:1px solid var(--border);background:var(--surface);
+       color:var(--text);padding:8px 15px;border-radius:var(--radius-sm);
+       cursor:pointer;font-size:14px}
+  .btn:hover{border-color:var(--border-strong);background:var(--surface-2)}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:var(--primary-hover)}
+  .btn.danger{color:var(--danger);border-color:var(--danger-border);
+              background:var(--danger-soft)}
+  .btn.sm{padding:5px 11px;font-size:13px}
+
+  footer{position:fixed;bottom:0;left:0;right:0;height:64px;
+         background:var(--surface);border-top:1px solid var(--border);
+         display:flex;align-items:center;gap:18px;padding:0 20px;font-size:14px}
+  .counter b{color:var(--warn);font-size:19px;
+             font-family:ui-monospace,Consolas,monospace}
+  .hint{color:var(--text-faint);font-size:13px}
+  .plan{color:var(--text-muted);font-size:13.5px}
+  .plan b{color:var(--text)}
+
+  dialog{background:var(--surface);color:var(--text);border:1px solid var(--border);
+         border-radius:var(--radius);padding:22px;max-width:520px;
+         box-shadow:0 12px 40px rgba(0,0,0,.16)}
+  dialog::backdrop{background:rgba(27,31,36,.35)}
+  dialog h3{margin:0 0 12px;font-size:16px}
+  dialog p{margin:9px 0;color:var(--text-muted);font-size:14px;line-height:1.75}
+  dialog .num{font-family:ui-monospace,Consolas,monospace;color:var(--warn);
+              font-size:22px;font-weight:600}
+  dialog .btns{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+</style>
+</head>
+<body>
+<div id="demo-banner" style="background:#1f6feb;color:#fff;font:13px/1.7 system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;padding:6px 12px;text-align:center">演示数据 · 预录回放 · 不上传、不联网 · <a href="../" style="color:#fff;text-decoration:underline">返回首页</a></div>
+
+
+<header>
+  <h1>邮戳卡识别 · 确认</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="spacer"></div>
+  <div class="meta" id="pagemeta"></div>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="stagewrap" id="stagewrap">
+      <img id="pageimg" alt="页面预览">
+      <svg id="overlay" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--success)"></i>可自动采纳</span>
+      <span><i style="background:var(--warn)"></i>待确认</span>
+      <span><i style="background:var(--danger)"></i>未采信</span>
+      <span><i style="background:var(--primary)"></i>邮戳圆</span>
+    </div>
+    <div class="notebox" id="demonote"></div>
+    <div class="notes" id="stagenotes"></div>
+  </section>
+
+  <section class="list" id="list"></section>
+</main>
+
+<footer>
+  <span class="counter">点击 <b id="clicks">0</b> 次</span>
+  <span class="plan" id="plan"></span>
+  <div class="spacer"></div>
+  <span class="hint">改一个字段算 1 次</span>
+  <button class="btn" id="btnPerCard">逐卡确认</button>
+  <button class="btn primary" id="btnBatch">整页确认（1 次）</button>
+</footer>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle"></h3>
+  <div id="dlgBody"></div>
+  <div class="btns"><button class="btn primary" id="dlgClose">知道了</button></div>
+</dialog>
+
+<script>
+/* ============================================================
+   数据由 generate.py 从**真实识别结果**生成并内联在这里。
+
+   * 颜色**只按 decision**，不按 confidence —— 实测 OCR 给
+     「福建南火」的置信度是 0.90 而它是错的。
+   * quad 是**检测到的四边形**（卡可能倾斜，轴对齐框画不准）
+   * circle 带 radius_over_card_width：正常邮戳约 0.23 卡宽，
+     明显更大说明圆抓错了东西（本数据里就有真实例子）
+   * office + office_no 合成「中亭街1」显示 —— 局名+戳号是一个标识，
+     少一个数字就是错的记录
+   ============================================================ */
+const DEMO = /*__DATA__*/;
+
+let cur = 0;
+let clicks = 0;
+const edited = new Set();    // `${cardIdx}.${field}` 已人工改过
+const excluded = new Set();  // `${pageIdx}.${cardIdx}` 已屏蔽（不录入）
+const collapsed = new Set(); // 人工折叠过的可疑卡
+
+const $ = (id) => document.getElementById(id);
+const CFG = {
+  auto_accept:  {cls:'ok',   icon:'✓'},
+  needs_review: {cls:'warn', icon:'!'},
+  reject:       {cls:'bad',  icon:'×'},
+};
+const CSSVAR = {ok:'var(--success)', warn:'var(--warn)', bad:'var(--danger)'};
+
+function addClick(n){ clicks += (n === undefined ? 1 : n); $('clicks').textContent = clicks; }
+
+function renderTabs(){
+  const t = $('tabs'); t.innerHTML = '';
+  DEMO.pages.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (i === cur ? ' on' : '');
+    const n = p.cards.filter(c => worstDecision(c) !== 'auto_accept').length;
+    b.innerHTML = esc(p.label) + (n ? `<span class="dot"></span>${n}` : '');
+    b.onclick = () => { cur = i; render(); };
+    t.appendChild(b);
+  });
+}
+
+function renderStage(){
+  const p = DEMO.pages[cur];
+  $('pageimg').src = p.image;
+  $('pagemeta').textContent = `${p.cards.length} 张 · ${p.pipeline_version}`;
+
+  const svg = $('overlay');
+  const W = p.work_size[0], H = p.work_size[1];
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const sw = Math.max(2, W / 420);
+
+  let s = '';
+  p.cards.forEach((c, i) => {
+    const col = CSSVAR[CFG[worstDecision(c)].cls];
+    const pts = c.quad.length === 4
+      ? c.quad.map(q => `${q[0]},${q[1]}`).join(' ')
+      : `${c.bbox[0]},${c.bbox[1]} ${c.bbox[0]+c.bbox[2]},${c.bbox[1]} `
+        + `${c.bbox[0]+c.bbox[2]},${c.bbox[1]+c.bbox[3]} ${c.bbox[0]},${c.bbox[1]+c.bbox[3]}`;
+    const dash = excluded.has(`${cur}.${i}`) ? `stroke-dasharray="${sw*3} ${sw*3}"` : '';
+    s += `<polygon points="${pts}" fill="none" stroke="${col}" stroke-width="${sw}" ${dash}/>`;
+    s += `<text x="${c.bbox[0] + sw*2}" y="${c.bbox[1] + sw*8}" fill="${col}"
+            font-size="${sw*8}" font-weight="700" font-family="monospace">${i}</text>`;
+    if (c.circle) {
+      s += `<circle cx="${c.circle.cx}" cy="${c.circle.cy}" r="${c.circle.r}"
+              fill="none" stroke="#1f6feb" stroke-width="${sw}"
+              stroke-dasharray="${sw*4} ${sw*3}" opacity="0.85"/>`;
+    }
+  });
+  svg.innerHTML = s;
+
+  $('demonote').innerHTML = `<b>这一页在看什么：</b>${esc(p.demo_note)}`;
+  $('stagenotes').innerHTML = p.stage_notes.map(n => `<div>· ${esc(n)}</div>`).join('');
+}
+
+const KEYFIELDS = ['date', 'place', 'office'];
+
+function worstDecision(card){
+  const ds = card.fields.map(f => f.decision);
+  if (ds.includes('reject')) return 'reject';
+  if (ds.includes('needs_review') || card.queue.length || card.size_suspect)
+    return 'needs_review';
+  return 'auto_accept';
+}
+function fieldOf(card, name){ return card.fields.find(f => f.field_name === name) || null; }
+
+/** **是否要人展开看** —— 用户选定的方案 3。
+ *
+ * 判据不是"全绿"，而是"**有没有带值的可疑项**"：
+ *
+ * | 情况 | 展开 |
+ * | --- | --- |
+ * | 三字段**有值但 needs_review** | ✅ 可能是错的，最需要人看 |
+ * | 三字段**有值但 reject**（置信度过低） | ✅ 红标的值也要看一眼 |
+ * | **字段为空** | ❌ 空不是异常，到展开区再填 |
+ * | `size_suspect`（尺寸异常） | ✅ 几何问题，字段值上看不出来 |
+ * | 戳型 unknown | ❌ 次要字段，"不知道"是诚实输出 |
+ *
+ * 为什么要区分"空"与"可疑"：**它们是两种不同的东西**。
+ * 空 = 机器没读到 → 人不需要现在做决定；可疑 = 机器给了一个值但可能错
+ * → 人**必须**判断。把两者混在一起（之前的做法）会让每一张有待填空字段的卡
+ * 都展开，于是全部展开、等于没折叠。
+ *
+ * ⚠️ 方案 3 的代价（如实记下）：**"读不到"不再引人注意**。
+ * 补救是展开区里仍然有 `（空）` 标记与 reject 理由，且 queue 里会有记录。
+ */
+function needsExpanding(card){
+  if (card.size_suspect) return true;
+  return ['date', 'place', 'office'].some(n => {
+    const f = fieldOf(card, n);
+    if (!f) return false;
+    // 只有**带值**的非绿才要人看
+    if (!f.value) return false;
+    return f.decision === 'needs_review' || f.decision === 'reject';
+  });
+}
+
+/** 局名 + 戳号合成一个标识。戳号存在时**必须**拼上 ——
+    「中亭街」与「中亭街1」是两个不同的邮局。 */
+function officeLabel(card){
+  const off = fieldOf(card, 'office');
+  const no = fieldOf(card, 'office_no');
+  const o = off && off.value ? off.value : '';
+  const n = no && no.value ? no.value : '';
+  return o ? (o + n) : '';
+}
+
+function renderList(){
+  const p = DEMO.pages[cur];
+  const list = $('list');
+  list.innerHTML = '';
+
+  p.cards.forEach((c, i) => {
+    const worst = worstDecision(c);
+    const isEx = excluded.has(`${cur}.${i}`);
+    const div = document.createElement('div');
+    div.className = 'card'
+      + (worst === 'needs_review' ? ' susp' : '')
+      + (worst === 'reject' ? ' bad' : '')
+      + (isEx ? ' excluded' : '');
+    // 展开规则（用户选定方案 3）：只有**带值的可疑项**才逼人看。
+    // 空的字段不算异常 —— 否则每张有待填空字段的卡都会展开，等于没折叠。
+    if (needsExpanding(c) && !collapsed.has(`${cur}.${i}`)) div.classList.add('open');
+
+    const mk = (name, text) => {
+      const f = fieldOf(c, name);
+      const key = `${i}.${name}`;
+      if (!text) return `<span class="chip none" data-k="${key}">
+          <span class="k">${name}</span><b>（空）</b></span>`;
+      const cfg = CFG[f ? f.decision : 'needs_review'] || CFG.needs_review;
+      const pen = edited.has(key) ? '<span class="pen">✎</span>' : '';
+      return `<span class="chip ${cfg.cls}" data-k="${key}"
+                title="${esc(f ? f.reason : '')}">
+                <span class="k">${name}</span><b>${esc(text)}</b>${pen}</span>`;
+    };
+    const dateTxt = (fieldOf(c, 'date') || {}).value || '';
+    const placeTxt = (fieldOf(c, 'place') || {}).value || '';
+    const chips = [mk('date', dateTxt), mk('place', placeTxt),
+                   mk('office', officeLabel(c))].join('');
+
+    const badges = [];
+    if (c.postmark_type) badges.push(`<span class="badge">${esc(c.postmark_type)}</span>`);
+    if (c.field_source === 'vlm') badges.push(`<span class="badge cloud">云端</span>`);
+    if (c.size_suspect) badges.push(`<span class="badge">尺寸可疑</span>`);
+    if (c.circle && c.circle.radius_over_card_width > 0.40) {
+      badges.push(`<span class="badge bad" title="正常邮戳约 0.23 卡宽；明显更大说明圆可能抓错了东西">
+        圆可疑 ${c.circle.radius_over_card_width}</span>`);
+    }
+
+    // 缩略图：复用页面预览图 + 该卡 bbox 的背景裁切，省一次请求
+    const bx = c.bbox[0], by = c.bbox[1], bw = Math.max(1, c.bbox[2]);
+    const W = p.work_size[0], H = p.work_size[1];
+    const sc = 52 / bw;
+    const thumbStyle = `background-image:url('${p.image}');`
+      + `background-size:${W*sc}px ${H*sc}px;`
+      + `background-position:${-bx*sc}px ${-by*sc}px;`;
+
+    div.innerHTML = `
+      <div class="row">
+        <span class="caret">${worst === 'auto_accept' ? '▸' : '▾'}</span>
+        <span class="idx">${i}</span>
+        <span class="thumb" style="${thumbStyle}"></span>
+        <span class="chips">${chips}</span>
+        <span class="side">${badges.join('')}</span>
+      </div>
+      <div class="detail">${renderDetail(c, i)}</div>`;
+
+    div.querySelector('.row').onclick = () => {
+      div.classList.toggle('open');
+      const k = `${cur}.${i}`;
+      if (div.classList.contains('open')) collapsed.delete(k); else collapsed.add(k);
+      div.querySelector('.caret').textContent =
+        div.classList.contains('open') ? '▾' : '▸';
+    };
+    div.querySelectorAll('.chip[data-k]').forEach(el => {
+      el.onclick = (ev) => { ev.stopPropagation(); editField(el.dataset.k); };
+    });
+    div.querySelectorAll('[data-act]').forEach(el => {
+      el.onclick = (ev) => { ev.stopPropagation(); doAct(el.dataset.act, el.dataset.idx); };
+    });
+    list.appendChild(div);
+  });
+  updatePlan();
+}
+
+function renderDetail(card, ci){
+  const order = ['date', 'place', 'office', 'office_no', 'postmark_type', 'stamp_region'];
+  const seen = new Set();
+  let out = '';
+  const emit = (f) => {
+    seen.add(f.field_name);
+    const cfg = CFG[f.decision] || CFG.needs_review;
+    const key = `${ci}.${f.field_name}`;
+    out += `<tr>
+      <td class="k">${esc(f.field_name)}</td>
+      <td class="v">
+        <span style="color:${CSSVAR[cfg.cls]};font-weight:700">${cfg.icon}</span>
+        ${esc(f.value || '（空）')}
+        <span style="color:var(--text-faint)"> ${f.confidence.toFixed(2)}</span>
+        ${edited.has(key) ? '<span style="color:var(--primary)"> ✎ 已改</span>' : ''}
+        <div class="why">${esc(f.reason)}</div>
+      </td></tr>`;
+  };
+  order.forEach(n => { const f = fieldOf(card, n); if (f) emit(f); });
+  card.fields.forEach(f => { if (!seen.has(f.field_name)) emit(f); });
+
+  if (card.queue.length) {
+    out += `<tr><td class="k">校对队列</td><td class="v">${
+      card.queue.map(q => `<div class="why">· <b>${esc(q.field_name)}</b> ${esc(q.value)}
+        —— ${esc(q.why)}</div>`).join('')}</td></tr>`;
+  }
+  out += `<tr><td class="k">戳型理由</td><td class="v">
+      <span style="font-family:inherit;color:var(--text-muted)">${
+        esc(card.postmark_reason || '—')}</span></td></tr>`;
+
+  const ex = excluded.has(`${cur}.${ci}`);
+  return `
+    <table class="f">${out}</table>
+    ${card.ocr_lines.length ? `<div class="mini">OCR 原文：${
+      card.ocr_lines.map(l => `<code>${esc(l[0])}</code>`).join('')}</div>` : ''}
+    ${card.notes.length ? `<div class="notes">${
+      card.notes.map(n => `<div>· ${esc(n)}</div>`).join('')}</div>` : ''}
+    <div class="acts">
+      <button class="btn sm danger" data-act="${ex ? 'include' : 'exclude'}" data-idx="${ci}">
+        ${ex ? '恢复录入' : '屏蔽（不录入）'}
+      </button>
+      <span class="hint">屏蔽只是这次不写库 —— 识别端点本身不落库，
+        所以"不录入"不需要删任何东西</span>
+    </div>`;
+}
+
+function editField(key){
+  const parts = key.split('.');
+  const ci = Number(parts[0]);
+  const name = parts.slice(1).join('.');
+  const card = DEMO.pages[cur].cards[ci];
+  const f = fieldOf(card, name);
+  const now = f ? f.value : '';
+  const v = prompt(`修改「${name}」（当前：${now || '空'}）`, now);
+  if (v === null || v === now) return;   // 取消或没改 → 不计点击
+  addClick();
+  edited.add(key);
+  if (f) f.value = v;
+  else card.fields.push({field_name:name, value:v, confidence:1.0,
+                         decision:'auto_accept', reason:'人工填写',
+                         pipeline_version:DEMO.pages[cur].pipeline_version});
+  renderList(); renderStage();
+}
+
+function doAct(act, idx){
+  const key = `${cur}.${Number(idx)}`;
+  addClick();
+  if (act === 'exclude') excluded.add(key); else excluded.delete(key);
+  renderList(); renderStage();
+}
+
+function updatePlan(){
+  const p = DEMO.pages[cur];
+  const ex = p.cards.filter((_, i) => excluded.has(`${cur}.${i}`)).length;
+  const open = p.cards.filter(c => needsExpanding(c)).length;
+  $('plan').innerHTML =
+    `将入库 <b>${p.cards.length - ex}</b> 张`
+    + (ex ? ` · 已屏蔽 <b>${ex}</b> 张` : '')
+    + ` · <b>${open}</b> 张有带值的可疑项（默认展开）`
+    + ` · <b>${p.cards.length - open}</b> 张可直接确认`;
+}
+
+$('btnBatch').onclick = () => {
+  addClick();
+  const p = DEMO.pages[cur];
+  const ex = p.cards.filter((_, i) => excluded.has(`${cur}.${i}`)).length;
+  const fields = p.cards.reduce((n, c) => n + c.fields.length, 0);
+  show('整页确认：1 次点击',
+    `<p>这一页 <b>${p.cards.length}</b> 张卡、<b>${fields}</b> 个字段，
+        将入库 <b>${p.cards.length - ex}</b> 张${ex ? `（已屏蔽 ${ex} 张）` : ''}。</p>
+     <p>整页确认的确认动作是 <span class="num">1</span> 次。</p>
+     <p>"看"的量与逐卡方式<b>完全一样</b>（每个值都要过眼），
+        差别在<b>必须点几次</b>，以及看的模式：整页是<b>扫一遍找异常</b>，
+        逐卡是<b>逐项做决定</b>。</p>
+     <p>风险如实说明：一键确认会削弱"每个值都被看一眼"。所以本界面
+        只让<b>可疑项自动展开</b>，其余折叠 —— 用颜色当注意力路由。</p>`);
+};
+$('btnPerCard').onclick = () => {
+  const p = DEMO.pages[cur];
+  const ex = p.cards.filter((_, i) => excluded.has(`${cur}.${i}`)).length;
+  const n = p.cards.length - ex;
+  addClick(n);
+  show(`逐卡确认：${n} 次点击`,
+    `<p>同样的 ${n} 张卡、同样的字段数，但确认动作是
+        <span class="num">${n}</span> 次。</p>
+     <p><b>即使 ${n} 张全对</b>，也要走完 ${n} 个循环 ——
+        这就是 A5（≤5 点击）能否满足的分水岭。</p>
+     <p>字段修改次数两种方式<b>完全一样</b>，这里没有把它重复计一遍。</p>`);
+};
+
+function show(title, html){
+  $('dlgTitle').textContent = title;
+  $('dlgBody').innerHTML = html;
+  $('dlg').showModal();
+}
+$('dlgClose').onclick = () => $('dlg').close();
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+function render(){ renderTabs(); renderStage(); renderList(); }
+
+try {
+  // ⚠️ 必须用 `typeof DEMO` 判断，**不要通过 window 去取它** ——
+  // 经典 <script> 里顶层 `const` 是**词法绑定**，不会成为 window 的属性
+  // （只有 `var` 和函数声明才会）。用 window 取会永远是 undefined，
+  // 于是这一个守卫会把**完好的数据**判成"数据为空"（实测踩过一次）。
+  if (typeof DEMO === 'undefined' || !DEMO.pages || !DEMO.pages.length) {
+    throw new Error('数据为空（内联的 DEMO 不存在或没有 pages）');
+  }
+  render();
+} catch (e) {
+  document.body.innerHTML =
+    '<div style="padding:36px;font:15px/1.8 system-ui;color:#1b1f24;'
+    + 'background:#f5f6f8;height:100%">'
+    + '<h2 style="color:#c0392b;margin:0 0 12px">界面加载失败</h2>'
+    + '<p>原因：' + String((e && e.message) || e).replace(/[<>&]/g, '') + '</p>'
+    + '<p style="color:#5b6470">请确认 <code>index.html</code> 与 '
+    + '<code>images/</code> 在同一个文件夹里，且是用 <code>generate.py</code> '
+    + '重新生成的（<code>template.html</code> 里没有数据，直接打开它是空白的）。</p>'
+    + '</div>';
+}
+</script>
+</body>
+</html>

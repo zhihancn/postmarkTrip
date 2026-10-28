@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跑戳日志 · postmarkTrip</title>
+<meta name="description" content="一个自托管的跑戳记录与管理系统：把纸质邮戳卡数字化、结构化，并长期积累成可检索的个人邮史档案。">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1116;
+    --panel: #161b22;
+    --line: #263041;
+    --fg: #e6edf3;
+    --muted: #97a3b6;
+    --accent: #4f8cff;
+    --accent-2: #2ea043;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -200px, #1b2636 0%, var(--bg) 60%);
+    color: var(--fg);
+    font: 16px/1.75 system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 56px 24px 72px; }
+  header h1 { font-size: 34px; line-height: 1.25; margin: 0 0 12px; letter-spacing: .5px; }
+  header .sub { color: var(--muted); font-size: 17px; margin: 0 0 8px; }
+  .badge {
+    display: inline-block; font-size: 12px; color: var(--accent);
+    border: 1px solid rgba(79,140,255,.4); border-radius: 999px;
+    padding: 2px 10px; margin-bottom: 18px;
+  }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 8px; }
+  .btn {
+    display: inline-block; padding: 11px 20px; border-radius: 10px;
+    text-decoration: none; font-weight: 600; font-size: 15px;
+    border: 1px solid var(--line); color: var(--fg); background: var(--panel);
+    transition: transform .12s ease, border-color .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  section { margin-top: 44px; }
+  h2 { font-size: 19px; margin: 0 0 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  figure { margin: 0; }
+  figure img {
+    width: 100%; border-radius: 12px; border: 1px solid var(--line);
+    display: block; background: #000;
+  }
+  figcaption { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  code {
+    background: #0b0f14; border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 6px; font-size: 13px;
+  }
+  pre {
+    background: #0b0f14; border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow: auto; font-size: 13px; line-height: 1.6;
+  }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="badge">v0.1 · 自托管 · 无遥测</span>
+    <h1>跑戳日志 · postmarkTrip</h1>
+    <p class="sub">把纸质邮戳卡数字化、结构化，长期积累成可检索的个人邮史档案。</p>
+    <p class="sub">识别只做「预填 + 人工确认」——不替你做判断，只把你从手打 20 个字段里解放出来。</p>
+
+    <div class="cta">
+      <a class="btn primary" href="frontDemo/">▶ 进入识别演示</a>
+      <a class="btn" href="https://github.com/zhihancn/postmarkTrip">GitHub 仓库</a>
+    </div>
+    <p class="note">演示是<strong>预录回放</strong>：不上传图片、不调用识别、不联网。真实系统要自己部署。</p>
+  </header>
+
+  <section>
+    <figure>
+      <img src="frontDemo/images/p005.jpg" alt="一组已盖戳的邮戳卡扫描件" loading="lazy">
+      <figcaption>样本来自作者本人的收藏：8 张邮戳卡整页扫描，演示的正是「切分 → 定位 → 预填 → 确认」这条链路。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>它解决什么</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>记录</h3>
+        <p>卡片、邮戳、邮票、邮局、地点、来源（实地跑戳 / 求戳信），可筛选、可搜索、可统计。</p>
+      </div>
+      <div class="card">
+        <h3>识别</h3>
+        <p>扫描后自动预填字段，人工点几次确认即可入库——不做全自动，因为盖印不是印刷。</p>
+      </div>
+      <div class="card">
+        <h3>重建</h3>
+        <p>用电子模板把邮票与邮戳重新合成到虚拟卡片上：换模板、去污渍、换电子邮票。</p>
+      </div>
+      <div class="card">
+        <h3>分享</h3>
+        <p>个人画廊 + 公共戳库（只读、可贡献），不做社交。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>自己跑一份</h2>
+    <p class="sub">需要 Docker（Windows / macOS 用 Docker Desktop，Linux 用 Docker Engine + compose 插件）。</p>
+    <pre><code>git clone https://github.com/zhihancn/postmarkTrip.git
+cd postmarkTrip
+make up          # Windows: .\pmtrip.ps1 up</code></pre>
+    <p class="note">首次启动会自动生成 <code>.env</code> 并打印一次管理员口令。浏览器打开 <code>http://localhost:9999</code>，登录后请立刻改口令。</p>
+  </section>
+
+  <section>
+    <h2>数据边界</h2>
+    <p class="sub">原始扫描件、卡片记录、日期地点、<code>.env</code>、数据库、备份——永远不会离开你的机器。</p>
+    <p class="sub">会离开的只有你主动开启的：云端 VLM（送检的那张图）、本机 colnetApi（票图）、局域网扫描 Agent。没有遥测、没有心跳、没有「检查更新」。</p>
+  </section>
+
+  <footer>
+    MIT © 2026 zhihancn ·
+    行政区划数据来自 <a href="https://www.geonames.org/">GeoNames</a>（CC-BY 4.0） ·
+    邮局名录来自国家邮政局公开名录 ·
+    Colnect 数据仅作候选发现，需署名
+  </footer>
+
+</div>
+</body>
+</html>

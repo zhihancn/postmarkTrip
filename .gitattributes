@@ -1,0 +1,29 @@
+# Normalize line endings for a cross-platform (Windows + WSL/Linux + Docker) project.
+# Everything is stored LF in the repository; Windows checkouts get CRLF only for
+# files where it actually matters.
+* text=auto eol=lf
+
+# Windows-specific
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binaries — never touch
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.gif  binary
+*.webp binary
+*.tif  binary
+*.tiff binary
+*.pdf  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+
+# Keep golden images intact for contract tests
+tests/contract/golden/** binary
+
+# Language stats / diffs
+*.lock linguist-generated
+contract/gen/** linguist-generated

@@ -1,0 +1,78 @@
+# ---- secrets (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- 本机专用编排（含绝对路径，不进仓库）----
+docker-compose.override.yml
+docker-compose.a5.yml
+# 个人开发脚本：Windows ⇄ WSL 同步，路径写死在本机
+sync-to-wsl.ps1
+scripts/sync-to-wsl.sh
+# 可选：绑定挂载的数据库目录（仅当你设了 PMTRIP_PGDATA 且指向仓库内）
+/.pgdata/
+
+# ---- 内部文档：只留在本地，不进公开仓库 ----
+# 演示站 demo/ 是公开的；docs/ 是交接记录、验收报告与样本扫描件。
+/docs/
+
+# ---- 一次性诊断产物（含真实扫描件，按需重新生成）----
+demo/frontDemo/_check/
+
+# ---- runtime data (see docs/ok/05 部署规范 §三) ----
+/data/
+/inbox/
+/backups/
+/models/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.pytest_cache/
+# 测试用的运行时目录（apps/api/tests/conftest.py 建在这里，
+# 刻意不用 tempfile.gettempdir()：受限环境里那可能不可写）
+.test-tmp/
+# pytest 在无法写 .pytest_cache 时会退回创建这种临时目录。
+# 它以 mode=0700 建目录，在某些受限环境（沙箱、部分 CI）里随后不可读也不可删，
+# 于是 git status 会一直报权限警告。忽略它。
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/
+
+# ---- Node / TypeScript ----
+node_modules/
+.pnpm-store/
+.vite/
+*.tsbuildinfo
+coverage/
+
+# ---- Go ----
+/apps/agent/pmtrip-agent
+/apps/agent/pmtrip-agent.exe
+*.test
+
+# ---- IDE / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- local scratch ----
+*.local
+/tmp/
+
+README.md.1
+SECURITY.md

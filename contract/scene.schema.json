@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://postmarktrip.dev/schema/scene.schema.json",
+  "title": "CardScene",
+  "description": "虚拟邮戳卡的场景图。这是「模板」的唯一定义：前端渲染器（TypeScript/Konva）与服务端渲染器（Go，v1.2）都消费同一份结构。所有长度单位为毫米（mm），角度单位为度（deg）。见 docs/ok/01 §4.1 与 docs/ok/04 §3.3。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "canvas", "slots"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "契约版本。破坏性变更时递增；渲染器必须拒绝不认识的版本。"
+    },
+    "template_id": {
+      "type": ["string", "null"],
+      "description": "模板标识。为空表示这是一张一次性编辑的卡片，不属于任何具名模板。"
+    },
+    "name": {
+      "type": ["string", "null"],
+      "maxLength": 200,
+      "description": "模板/卡片显示名。"
+    },
+    "canvas": { "$ref": "#/$defs/Canvas" },
+    "background": {
+      "oneOf": [
+        { "$ref": "#/$defs/BackgroundImage" },
+        { "$ref": "#/$defs/BackgroundSolid" }
+      ],
+      "description": "底层背景。省略表示纯白。"
+    },
+    "slots": {
+      "type": "array",
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/Slot" },
+      "description": "槽位列表。渲染顺序由每个槽位的 z 决定，与数组顺序无关。"
+    }
+  },
+  "$defs": {
+    "Mm": {
+      "type": "number",
+      "description": "毫米。允许负值（用于出血或越界摆放）。"
+    },
+    "Canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width_mm", "height_mm"],
+      "properties": {
+        "width_mm": { "$ref": "#/$defs/Mm", "exclusiveMinimum": 0 },
+        "height_mm": { "$ref": "#/$defs/Mm", "exclusiveMinimum": 0 },
+        "dpi": {
+          "type": "integer",
+          "minimum": 72,
+          "maximum": 1200,
+          "default": 300,
+          "description": "导出目标 DPI。仅影响栅格化，不影响布局（布局全部用 mm）。"
+        },
+        "bleed_mm": {
+          "$ref": "#/$defs/Mm",
+          "minimum": 0,
+          "default": 0,
+          "description": "出血。屏幕欣赏场景通常为 0。"
+        }
+      }
+    },
+    "AssetRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "内容寻址的资产引用，形如 sha256:<64位小写十六进制>。对应 apps/api storage 层的 asset.sha256。"
+    },
+    "BackgroundImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "asset"],
+      "properties": {
+        "type": { "const": "image" },
+        "asset": { "$ref": "#/$defs/AssetRef" },
+        "fit": { "$ref": "#/$defs/Fit", "default": "cover" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 }
+      }
+    },
+    "BackgroundSolid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "color"],
+      "properties": {
+        "type": { "const": "solid" },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+          "description": "#RRGGBB 或 #RRGGBBAA。"
+        }
+      }
+    },
+    "Fit": {
+      "type": "string",
+      "enum": ["contain", "cover", "fill", "none"],
+      "description": "与 CSS object-fit 语义一致。contain 保持比例完整放入；cover 保持比例填满并裁切。"
+    },
+    "Rotation": {
+      "type": "number",
+      "minimum": -360,
+      "maximum": 360,
+      "default": 0,
+      "description": "顺时针角度。旋转中心为槽位矩形的几何中心。"
+    },
+    "SlotBase": {
+      "type": "object",
+      "required": ["id", "kind", "x", "y", "w", "h"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "槽位在场景内唯一。"
+        },
+        "x": { "$ref": "#/$defs/Mm", "description": "左上角 X（未旋转时）。" },
+        "y": { "$ref": "#/$defs/Mm", "description": "左上角 Y（未旋转时）。" },
+        "w": { "$ref": "#/$defs/Mm", "exclusiveMinimum": 0 },
+        "h": { "$ref": "#/$defs/Mm", "exclusiveMinimum": 0 },
+        "rotation": { "$ref": "#/$defs/Rotation" },
+        "z": {
+          "type": "integer",
+          "default": 0,
+          "description": "图层顺序，越大越靠上。真实场景里「戳压票」就是靠 postmark 槽位的 z 大于 stamp 槽位实现的。"
+        },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 },
+        "label": { "type": ["string", "null"], "maxLength": 60 },
+        "locked": { "type": "boolean", "default": false }
+      }
+    },
+    "Slot": {
+      "description": "按 kind 区分的联合类型。",
+      "oneOf": [
+        { "$ref": "#/$defs/ImageSlot" },
+        { "$ref": "#/$defs/PostmarkSlot" },
+        { "$ref": "#/$defs/StampSlot" },
+        { "$ref": "#/$defs/TextSlot" }
+      ]
+    },
+    "ImageSlot": {
+      "allOf": [{ "$ref": "#/$defs/SlotBase" }],
+      "properties": {
+        "kind": { "const": "image" },
+        "asset": {
+          "$ref": "#/$defs/AssetRef",
+          "description": "可省略：模板在实例化前没有资产；卡片上也可能缺图（渲染器画占位，不许静默留白）。"
+        },
+        "fit": { "$ref": "#/$defs/Fit", "default": "contain" }
+      },
+      "required": ["kind"]
+    },
+    "PostmarkSlot": {
+      "allOf": [{ "$ref": "#/$defs/SlotBase" }],
+      "properties": {
+        "kind": { "const": "postmark" },
+        "source": {
+          "type": "string",
+          "enum": ["scan_cut", "generated"],
+          "default": "scan_cut",
+          "description": "scan_cut = 从原始扫描件抠出的位图（事实）；generated = 参数化/生成（美化）。这一区分对应 postmark.provenance，决定了能否隐藏或替换日期。"
+        },
+        "asset": {
+          "$ref": "#/$defs/AssetRef",
+          "description": "source=scan_cut 时应指向从扫描件抠出的贴片；**可省略** —— 模板未实例化、或这张卡没有贴片（渲染器画占位，不许静默留白）。"
+        },
+        "template_asset": {
+          "$ref": "#/$defs/AssetRef",
+          "description": "source=generated 时的非日期图层。"
+        },
+        "show_date": {
+          "type": "boolean",
+          "default": true,
+          "description": "仅对 source=generated 有意义。scan_cut 的日期烤死在像素里，此开关必须被渲染器忽略。"
+        },
+        "date_text": {
+          "type": ["string", "null"],
+          "description": "仅当 source=generated 且 show_date=true 时使用。"
+        },
+        "fit": { "$ref": "#/$defs/Fit", "default": "contain" }
+      },
+      "required": ["kind"]
+    },
+    "StampSlot": {
+      "allOf": [{ "$ref": "#/$defs/SlotBase" }],
+      "properties": {
+        "kind": { "const": "stamp" },
+        "asset": {
+          "$ref": "#/$defs/AssetRef",
+          "description": "可省略：模板在实例化前没有资产；这张卡也可能没有票贴片（渲染器画占位）。"
+        },
+        "fit": { "$ref": "#/$defs/Fit", "default": "contain" },
+        "preserve_perforation": {
+          "type": "boolean",
+          "default": true,
+          "description": "保留齿孔边缘。齿孔是邮票的鉴伪特征，默认不裁切。"
+        }
+      },
+      "required": ["kind"]
+    },
+    "TextSlot": {
+      "allOf": [{ "$ref": "#/$defs/SlotBase" }],
+      "properties": {
+        "kind": { "const": "text" },
+        "text": { "type": ["string", "null"], "maxLength": 500 },
+        "field": {
+          "type": ["string", "null"],
+          "description": "绑定到记录的字段路径（如 postmark.inscription）。有值时优先于 text，换数据无需手改。"
+        },
+        "font_family": { "type": "string", "default": "Noto Serif SC" },
+        "font_size_mm": { "$ref": "#/$defs/Mm", "exclusiveMinimum": 0 },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#000000" },
+        "align": { "type": "string", "enum": ["left", "center", "right"], "default": "left" },
+        "valign": { "type": "string", "enum": ["top", "middle", "bottom"], "default": "top" },
+        "writing_mode": {
+          "type": "string",
+          "enum": ["horizontal", "vertical"],
+          "default": "horizontal",
+          "description": "竖排。中文邮戳的名称与书法常为竖排（见 docs/need/03 §三.3）。"
+        }
+      },
+      "required": ["kind"]
+    }
+  }
+}
