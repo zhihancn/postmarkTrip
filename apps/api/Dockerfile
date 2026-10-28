@@ -116,11 +116,13 @@ WORKDIR /app
 #     结果：识别栈完全不可用（cv2 与 rapidocr 都 import 失败），
 #     而 `pip list` 看起来一切正常。实测撞到过一次。
 #
-#     第 1 步装 `[recognition]`：那个 extra 里**没有** rapidocr 本体，
-#     只有 headless 版 opencv 与 rapidocr 的其余传递依赖 —— 所以这一步
-#     看到不 opencv-python。
-#     第 2 步用 `--no-deps` 装 rapidocr 本体：**pip 就不会去读它的元数据**，
-#     于是 opencv-python 永远不会被拖进来。
+#     第 1 步装 `[recognition]`：这个 extra 现在**包含** rapidocr 本体，
+#     所以 pip 会去解析它的元数据，**opencv-python（非 headless）会被拖进来**
+#     —— 两个包都提供 cv2，非 headless 的那个赢。
+#     第 2 步用 `--no-deps` 装 rapidocr 本体，保留是为了版本可控。
+#     第 3 步**强制回到 headless**：卸掉 opencv-python，再用
+#     --force-reinstall --no-deps 装回 opencv-python-headless。
+#     这一步不能省 —— 省掉就是 libxcb.so.1 那个错。
 #
 #     代价：rapidocr 将来新增的依赖不会自动跟上。
 #     这条由 tests/test_recognition_deps.py 守着 —— 它把 rapidocr 自己声明的
@@ -137,8 +139,11 @@ RUN set -eux; \
     if [ "$INSTALL_RECOGNITION" = "1" ]; then \
         echo "第1步：基础依赖 + [recognition]（headless opencv + rapidocr 的传递依赖）"; \
         pip install -e './apps/api[recognition]'; \
-        echo "第2步：--no-deps 装 rapidocr 本体（pip 因此不读它的元数据，opencv-python 不会被拖进来）"; \
+        echo "第2步：--no-deps 装 rapidocr 本体（固定版本，不让 pip 重复解析依赖）"; \
         pip install --no-deps rapidocr-onnxruntime; \
+        echo "第3步：卸掉非 headless 的 opencv-python，强制回到 headless"; \
+        pip uninstall -y opencv-python || true; \
+        pip install --force-reinstall --no-deps 'opencv-python-headless>=4.10'; \
         echo "自检：cv2 与 rapidocr 必须真的能 import"; \
         python -c "import cv2, numpy, onnxruntime, rapidocr_onnxruntime; \
                    print('识别栈 OK | cv2', cv2.__version__, '| numpy', numpy.__version__)"; \
